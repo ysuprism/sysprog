@@ -1,13 +1,13 @@
 #Makefile
 
-mysh: main.o getargs.o
-	gcc -g -O0 -o mysh main.o getargs.o
+mysh: main.o utils.o
+	gcc -g -O0 -o mysh main.o utils.o
 
-main.o: main.c
+main.o: main.c token.h
 	gcc -g -O0 -c main.c
 
-getargs.o: getargs.c
-	gcc -g -O0 -c getargs.c
+utils.o: utils.c token.h
+	gcc -g -O0 -c utils.c
 
 clean: 
 	\rm mysh *.o
