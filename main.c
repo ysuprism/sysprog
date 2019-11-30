@@ -5,6 +5,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <signal.h>
 #include "token.h"
 
 #define CWDLEN 256
@@ -15,18 +16,23 @@
 #define FILELEN 64
 #define PATHNUM 256
 
+extern char **environ;
+
 token gettoken(char *token, int len);
 void redir(char *filename, int mode);
 void getpaths(int *pc, char *pv[], int len, char *path);
 int existfile(int pc, char *pv[], char *filename);
+void set_sigaction();
 
 int main(){
-  int before, count, pc, len, fd, pfd[2];
+  int before, err, count, pc, len, fd, pfd[2];
   char *path, *pv[PATHNUM];
 
   len = sizeof(pv) / sizeof(pv[0]);
   path = getenv("PATH");
   getpaths(&pc, pv, len, path);
+  
+  set_sigaction();
 
   for(;;){
     char cwd[CWDLEN];
@@ -36,13 +42,14 @@ int main(){
     before = count = 0;
 
     for(;;){
-      int ac = 0;
+      int ac;
       char buf[BUFLEN];
       char *av[ARGNUM];
       char filename[FILENUM][FILELEN];
       int redir_in, redir_out, redir_append;
       token ret;
-
+      
+      ac = err = 0;
       redir_in = redir_out = redir_append = 0;
       for(int i = 0; i < ARGNUM; i++){
         av[i] = &buf[32*i];
@@ -57,26 +64,38 @@ int main(){
 	  if(ret == TKN_NORMAL){
 	    redir_in = 1;
 	  }else{
-	    fprintf(stderr, "give a filename");
+	    fprintf(stderr, "invalid file name\n");
+	    err = 1;
+	    break;
 	  }
         }else if(ret == TKN_REDIR_OUT){
 	  ret = gettoken(filename[1], FILELEN);
 	  if(ret == TKN_NORMAL){
 	    redir_out = 1;
 	  }else{
-	    fprintf(stderr, "give a filename");
+	    fprintf(stderr, "invalid file name\n");
+	    err = 1;
+	    break;
 	  }
 	}else if(ret == TKN_REDIR_APPEND){
 	  ret = gettoken(filename[1], FILELEN);
 	  if(ret == TKN_NORMAL){
 	    redir_append = 1;
 	  }else{
-	    fprintf(stderr, "give a filename");
+	    fprintf(stderr, "invalid file name\n");
+	    err = 1;
+	    break;
 	  }
 	}else if(ret == TKN_PIPE || ret == TKN_EOL){
 	  av[ac] = NULL;
           break;
         }
+      }
+      
+      if(err){
+	char tmp[BUFLEN];
+        fgets(tmp, BUFLEN, stdin);	
+        break;
       }
 
       if(ret == TKN_PIPE){
@@ -95,7 +114,7 @@ int main(){
           
 	  int i;
 	  if((i = existfile(pc, pv, av[0])) < 0){
-	    fprintf(stderr, "no such a command exists\n");
+	    fprintf(stderr, "no such a command\n");
 	    exit(1);
 	  }
           
@@ -104,7 +123,7 @@ int main(){
 	  strncpy(str, pv[i], sizeof(str) - 2);
 	  str[strlen(str)] = '/';
 	  strncat(str, av[0], sizeof(str) - strlen(str) - 1);
-          if(execve(str, av, NULL) < 0){
+          if(execve(str, av, environ) < 0){
 	    perror("execve");
 	    exit(1);
 	  }
@@ -124,9 +143,9 @@ int main(){
             if(before){
 	      close(0);
 	      dup(pfd[0]);
+	      close(pfd[0]);
+	      close(pfd[1]);
 	    }
-	    close(pfd[0]);
-	    close(pfd[1]);
 	    if(redir_in){
 	      redir(filename[0], 0);
 	    }
@@ -138,7 +157,7 @@ int main(){
 
 	    int i;
 	    if((i = existfile(pc, pv, av[0])) < 0){
-	      fprintf(stderr, "no such a command exists\n");
+	      fprintf(stderr, "no such a command\n");
 	      exit(1);
 	    }
 
@@ -147,23 +166,29 @@ int main(){
 	    strncpy(str, pv[i], sizeof(str) - 2);
 	    str[strlen(str)] = '/';
 	    strncat(str, av[0], sizeof(str) - strlen(str) - 1);
-	    if(execve(str, av, NULL) < 0){
+	    if(execve(str, av, environ) < 0){
 	      perror("execve");
 	      exit(1);
 	    }
 	  }
 	  if(fd > 0){
-	    if(before){
-	      close(pfd[0]);
-	      close(pfd[1]);
-	    }
-	    int status[count+1];
-	    for(int i = 0; i < count + 1; i++){
-	      wait(&status[i]);
-	    }
 	    break;
 	  }
 	}
+      }
+    }
+
+    if(before){
+      close(pfd[0]);
+      close(pfd[1]);
+    }
+    if(err){
+      count -= 1;
+    }
+    if(count != -1){
+      int status[count+1];
+      for(int i = 0; i < count + 1; i++){
+        wait(&status[i]);
       }
     }
   }

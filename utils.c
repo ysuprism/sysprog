@@ -1,8 +1,10 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <ctype.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <signal.h>
 #include "token.h"
 
 token gettoken(char *token, int len){
@@ -111,4 +113,22 @@ int existfile(int pc, char *pv[], char *filename){
     } 
   }
   return -1;
+}
+
+void sigint_handler(int sig){
+  char cwd[256];
+  printf("\n");
+  getcwd(cwd, 256);
+  fprintf(stderr, "%s$ ", cwd);
+}
+
+void set_sigaction(){
+  struct sigaction act;
+  sigemptyset(&act.sa_mask);
+  act.sa_handler = sigint_handler;
+  act.sa_flags = 0;
+  if(sigaction(SIGINT, &act, NULL) < 0){
+    perror("sigaction");
+    exit(1);
+  }
 }
