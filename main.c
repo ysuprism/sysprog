@@ -13,12 +13,20 @@
 #define ARGLEN 32
 #define FILENUM 2
 #define FILELEN 64
+#define PATHNUM 256
 
-int gettoken(char *token, int len);
+token gettoken(char *token, int len);
 void redir(char *filename, int mode);
+void getpaths(int *pc, char *pv[], int len, char *path);
+int existfile(int pc, char *pv[], char *filename);
 
 int main(){
-  int before, count, fd, pfd[2];
+  int before, count, pc, len, fd, pfd[2];
+  char *path, *pv[PATHNUM];
+
+  len = sizeof(pv) / sizeof(pv[0]);
+  path = getenv("PATH");
+  getpaths(&pc, pv, len, path);
 
   for(;;){
     char cwd[CWDLEN];
@@ -84,7 +92,22 @@ int main(){
 	  dup(pfd[1]);
 	  close(pfd[0]);
 	  close(pfd[1]);
-          execvp(av[0], av);
+          
+	  int i;
+	  if((i = existfile(pc, pv, av[0])) < 0){
+	    fprintf(stderr, "no such a command exists\n");
+	    exit(1);
+	  }
+          
+	  char str[512];
+	  memset(str, 0, sizeof(str));
+	  strncpy(str, pv[i], sizeof(str) - 2);
+	  str[strlen(str)] = '/';
+	  strncat(str, av[0], sizeof(str) - strlen(str) - 1);
+          if(execve(str, av, NULL) < 0){
+	    perror("execve");
+	    exit(1);
+	  }
 	}
 	if(fd > 0){
 	  before = 1;
@@ -112,7 +135,22 @@ int main(){
 	    }else if(redir_append){
 	      redir(filename[1], 2);
 	    }
-	    execvp(av[0], av);
+
+	    int i;
+	    if((i = existfile(pc, pv, av[0])) < 0){
+	      fprintf(stderr, "no such a command exists\n");
+	      exit(1);
+	    }
+
+	    char str[512];
+	    memset(str, 0, sizeof(str));
+	    strncpy(str, pv[i], sizeof(str) - 2);
+	    str[strlen(str)] = '/';
+	    strncat(str, av[0], sizeof(str) - strlen(str) - 1);
+	    if(execve(str, av, NULL) < 0){
+	      perror("execve");
+	      exit(1);
+	    }
 	  }
 	  if(fd > 0){
 	    if(before){
