@@ -14,13 +14,11 @@ token gettoken(char *token, int len){
   c = getchar();
   p = token;
 
-  while(c == ' '){
+  while(c == ' ' || c == '\t'){
     c = getchar();
   }
 
   switch(c){
-    case EOF:
-	    return TKN_EOF;
     case '\n':
 	    return TKN_EOL;
     case '&':
@@ -43,7 +41,7 @@ token gettoken(char *token, int len){
 
   for(i = 0; i < len - 1; i++){
     c = getchar();
-    if(c != EOF && c != '\n' && c != '&' && c != '<' && 
+    if(c != '\n' && c != '&' && c != '<' && 
 		    c != '>' && c != '|' && !isblank(c)){
       *p++ = c;
     }else{
@@ -61,17 +59,26 @@ void redir(char *filename, int mode){
   int fd;
 
   if(mode == 0){
-    fd = open(filename, O_RDONLY);
+    if((fd = open(filename, O_RDONLY)) < 0){
+      perror(filename);
+      return;
+    }
     close(0);
     dup(fd);
     close(fd);
   }else if(mode == 1){
-    fd = open(filename, O_WRONLY|O_CREAT, 0644);  
+    if((fd = open(filename, O_WRONLY|O_CREAT, 0644)) < 0){
+      perror(filename);
+      return;
+    } 
     close(1);
     dup(fd);
     close(fd);
   }else if(mode == 2){
-    fd = open(filename, O_WRONLY|O_APPEND);
+    if((fd = open(filename, O_WRONLY|O_APPEND)) < 0){
+      perror(filename);
+      return;
+    }
     close(1);
     dup(fd);
     close(fd);
@@ -128,6 +135,15 @@ void set_sigaction(){
   act.sa_handler = sigint_handler;
   act.sa_flags = 0;
   if(sigaction(SIGINT, &act, NULL) < 0){
+    perror("sigaction");
+    exit(1);
+  }
+
+  struct sigaction act2;
+  sigemptyset(&act2.sa_mask);
+  act2.sa_handler = SIG_IGN;
+  act2.sa_flags = 0;
+  if(sigaction(SIGTTOU, &act2, NULL) < 0){
     perror("sigaction");
     exit(1);
   }

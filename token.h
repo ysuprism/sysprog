@@ -2,7 +2,6 @@
 typedef enum {
   TKN_NONE,
   TKN_NORMAL,
-  TKN_EOF,
   TKN_EOL,
   TKN_BG,
   TKN_PIPE,

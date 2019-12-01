@@ -14,23 +14,30 @@
 #define ARGLEN 32
 #define FILENUM 2
 #define FILELEN 64
-#define PATHNUM 256
+#define PATHNUM 128
+#define PATHLEN 128
+#define PBUFLEN PATHNUM * PATHLEN
 
 extern char **environ;
 
 token gettoken(char *token, int len);
 void redir(char *filename, int mode);
-void getpaths(int *pc, char *pv[], int len, char *path);
+void getpaths(int *pc, char *pv[], int len, char *pbuf);
 int existfile(int pc, char *pv[], char *filename);
 void set_sigaction();
 
 int main(){
-  int before, err, count, pc, len, fd, pfd[2];
-  char *path, *pv[PATHNUM];
+  int before, err, count, pc, fd, pfd[2];
+  char *path, *pv[PATHNUM], pbuf[PBUFLEN];
+  token ret;
 
-  len = sizeof(pv) / sizeof(pv[0]);
   path = getenv("PATH");
-  getpaths(&pc, pv, len, path);
+  if(strncpy(pbuf, path, sizeof(pbuf) - 1) < 0){
+    perror("strncpy");
+    exit(1);
+  }
+  pbuf[PBUFLEN - 1] = '\0';
+  getpaths(&pc, pv, PATHNUM, pbuf);
   
   set_sigaction();
 
@@ -47,7 +54,6 @@ int main(){
       char *av[ARGNUM];
       char filename[FILENUM][FILELEN];
       int redir_in, redir_out, redir_append;
-      token ret;
       
       ac = err = 0;
       redir_in = redir_out = redir_append = 0;
@@ -64,7 +70,7 @@ int main(){
 	  if(ret == TKN_NORMAL){
 	    redir_in = 1;
 	  }else{
-	    fprintf(stderr, "invalid file name\n");
+	    fprintf(stderr, "syntax error: no file name\n");
 	    err = 1;
 	    break;
 	  }
@@ -73,7 +79,7 @@ int main(){
 	  if(ret == TKN_NORMAL){
 	    redir_out = 1;
 	  }else{
-	    fprintf(stderr, "invalid file name\n");
+	    fprintf(stderr, "syntax error: no file name\n");
 	    err = 1;
 	    break;
 	  }
@@ -82,7 +88,7 @@ int main(){
 	  if(ret == TKN_NORMAL){
 	    redir_append = 1;
 	  }else{
-	    fprintf(stderr, "invalid file name\n");
+	    fprintf(stderr, "syntax error: no file name\n");
 	    err = 1;
 	    break;
 	  }
@@ -93,13 +99,18 @@ int main(){
       }
       
       if(err){
-	char tmp[BUFLEN];
-        fgets(tmp, BUFLEN, stdin);	
         break;
       }
-
       if(ret == TKN_PIPE){
+	if(av[0] == NULL){
+	  fprintf(stderr, "syntax error: no command\n");
+	  err = 1;
+	  break;
+	}
 	if(!before){
+	  if(redir_in){
+	    redir(filename[0], 0);
+	  }
 	  pipe(pfd);
 	}
 	if((fd = fork()) == 0){
@@ -114,7 +125,7 @@ int main(){
           
 	  int i;
 	  if((i = existfile(pc, pv, av[0])) < 0){
-	    fprintf(stderr, "no such a command\n");
+	    fprintf(stderr, "no such command\n");
 	    exit(1);
 	  }
           
@@ -133,6 +144,14 @@ int main(){
 	  count++;
 	}
       }else if(ret == TKN_EOL){
+	if(av[0] == NULL && before){
+	  fprintf(stderr, "> ");
+	  continue;
+	}else if(av[0] == NULL){
+	  fprintf(stderr, "syntax error: no command\n");
+	  err = 1;
+	  break;
+	}
 	if(strcmp(av[0], "exit") == 0){
 	  exit(0);
 	}else if(strcmp(av[0], "cd") == 0){
@@ -145,9 +164,10 @@ int main(){
 	      dup(pfd[0]);
 	      close(pfd[0]);
 	      close(pfd[1]);
-	    }
-	    if(redir_in){
-	      redir(filename[0], 0);
+	    }else{
+	      if(redir_in){
+	        redir(filename[0], 0);
+	      }
 	    }
 	    if(redir_out){
 	      redir(filename[1], 1);
@@ -157,7 +177,7 @@ int main(){
 
 	    int i;
 	    if((i = existfile(pc, pv, av[0])) < 0){
-	      fprintf(stderr, "no such a command\n");
+	      fprintf(stderr, "no such command\n");
 	      exit(1);
 	    }
 
@@ -183,6 +203,13 @@ int main(){
       close(pfd[1]);
     }
     if(err){
+      char c;
+      if(ret != TKN_EOL){
+        char tmp[BUFLEN];
+        if(fgets(tmp, BUFLEN, stdin) < 0){
+          fprintf(stderr, "failed to read remaining characters in stdin\n");
+        }
+      }
       count -= 1;
     }
     if(count != -1){
