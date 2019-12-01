@@ -85,24 +85,24 @@ void redir(char *filename, int mode){
   }
 }
 
-void getpaths(int *pc, char *pv[], int len, char *path){
+void getpaths(int *pc, char *pv[], int len, char *pbuf){
   *pc = 0;
 
   for(;;){
-    if(*path == '\0'){
+    if(*pbuf == '\0'){
       return;
     }
     if(*pc == len){
       return;
     }
-    pv[(*pc)++] = path;
-    while(*path && *path != ':'){
-      path++;
+    pv[(*pc)++] = pbuf;
+    while(*pbuf && *pbuf != ':'){
+      pbuf++;
     }
-    if(*path == '\0'){
+    if(*pbuf == '\0'){
       return;
     }
-    *path++ = '\0';
+    *pbuf++ = '\0';
   } 
 }
 
@@ -125,8 +125,6 @@ int existfile(int pc, char *pv[], char *filename){
 void sigint_handler(int sig){
   char cwd[256];
   printf("\n");
-  getcwd(cwd, 256);
-  fprintf(stderr, "%s$ ", cwd);
 }
 
 void set_sigaction(){

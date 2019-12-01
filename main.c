@@ -27,7 +27,7 @@ int existfile(int pc, char *pv[], char *filename);
 void set_sigaction();
 
 int main(){
-  int before, err, count, pc, fd, pfd[2];
+  int count, pipec, pc, err, fd, pfd[10][2];
   char *path, *pv[PATHNUM], pbuf[PBUFLEN];
   token ret;
 
@@ -46,7 +46,7 @@ int main(){
     getcwd(cwd, CWDLEN);
     fprintf(stderr, "%s$ ", cwd);
     
-    before = count = 0;
+    count = pipec = 0;
 
     for(;;){
       int ac;
@@ -57,6 +57,7 @@ int main(){
       
       ac = err = 0;
       redir_in = redir_out = redir_append = 0;
+      count++;
       for(int i = 0; i < ARGNUM; i++){
         av[i] = &buf[32*i];
       }
@@ -107,28 +108,33 @@ int main(){
 	  err = 1;
 	  break;
 	}
-	if(!before){
+	pipe(pfd[pipec]);
+	if((fd = fork()) == 0){
+	  if(pipec){
+	    close(0);
+	    dup(pfd[pipec - 1][0]);
+	  }
+	  close(1);
+	  dup(pfd[pipec][1]);
+	  for(int i = 0; i < pipec + 1; i++){
+	    close(pfd[i][0]);
+	    close(pfd[i][1]);
+	  }
+          
 	  if(redir_in){
 	    redir(filename[0], 0);
 	  }
-	  pipe(pfd);
-	}
-	if((fd = fork()) == 0){
-	  if(before){
-	    close(0);
-	    dup(pfd[0]);
+	  if(redir_out){
+	    redir(filename[1], 1);
+	  }else if(redir_append){
+	    redir(filename[1], 2);
 	  }
-	  close(1);
-	  dup(pfd[1]);
-	  close(pfd[0]);
-	  close(pfd[1]);
-          
+
 	  int i;
 	  if((i = existfile(pc, pv, av[0])) < 0){
 	    fprintf(stderr, "no such command\n");
 	    exit(1);
 	  }
-          
 	  char str[512];
 	  memset(str, 0, sizeof(str));
 	  strncpy(str, pv[i], sizeof(str) - 2);
@@ -140,11 +146,10 @@ int main(){
 	  }
 	}
 	if(fd > 0){
-	  before = 1;
-	  count++;
+	  pipec++;
 	}
       }else if(ret == TKN_EOL){
-	if(av[0] == NULL && before){
+	if(av[0] == NULL && pipec){
 	  fprintf(stderr, "> ");
 	  continue;
 	}else if(av[0] == NULL){
@@ -159,11 +164,13 @@ int main(){
 	  break;
 	}else{
 	  if((fd = fork()) == 0){
-            if(before){
+            if(pipec){
 	      close(0);
-	      dup(pfd[0]);
-	      close(pfd[0]);
-	      close(pfd[1]);
+	      dup(pfd[pipec-1][0]);
+	      for(int i = 0; i < pipec; i++){
+	        close(pfd[i][0]);
+		close(pfd[i][1]);
+	      }
 	    }else{
 	      if(redir_in){
 	        redir(filename[0], 0);
@@ -180,7 +187,6 @@ int main(){
 	      fprintf(stderr, "no such command\n");
 	      exit(1);
 	    }
-
 	    char str[512];
 	    memset(str, 0, sizeof(str));
 	    strncpy(str, pv[i], sizeof(str) - 2);
@@ -198,9 +204,11 @@ int main(){
       }
     }
 
-    if(before){
-      close(pfd[0]);
-      close(pfd[1]);
+    if(pipec){
+      for(int i = 0; i < pipec; i++){
+        close(pfd[i][0]);
+	close(pfd[i][1]);
+      }
     }
     if(err){
       char c;
@@ -212,9 +220,9 @@ int main(){
       }
       count -= 1;
     }
-    if(count != -1){
-      int status[count+1];
-      for(int i = 0; i < count + 1; i++){
+    if(count){
+      int status[count];
+      for(int i = 0; i < count; i++){
         wait(&status[i]);
       }
     }
