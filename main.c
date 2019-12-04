@@ -11,12 +11,12 @@
 #define CWDLEN 256
 #define BUFLEN 512
 #define ARGNUM 16
-#define ARGLEN 32
-#define FILENUM 2
+#define ARGLEN BUFLEN / ARGNUM
 #define FILELEN 64
 #define PATHNUM 128
 #define PATHLEN 128
 #define PBUFLEN PATHNUM * PATHLEN
+#define MAXPIPE 20
 
 extern char **environ;
 
@@ -27,12 +27,11 @@ int existfile(int pc, char *pv[], char *filename);
 void set_sigaction();
 
 int main(){
-  int count, pipec, pc, err, fd, pfd[10][2];
+  int pc, fd, pfd[MAXPIPE][2];
   char *path, *pv[PATHNUM], pbuf[PBUFLEN];
-  token ret;
 
   path = getenv("PATH");
-  if(strncpy(pbuf, path, sizeof(pbuf) - 1) < 0){
+  if(strncpy(pbuf, path, PBUFLEN - 1) < 0){
     perror("strncpy");
     exit(1);
   }
@@ -42,58 +41,83 @@ int main(){
   set_sigaction();
 
   for(;;){
+    int pipec, err;
     char cwd[CWDLEN];
+    token ret;
+
+    pipec = 0;
+    memset(cwd, 0, CWDLEN);
+    
     getcwd(cwd, CWDLEN);
     fprintf(stderr, "%s$ ", cwd);
     
-    count = pipec = 0;
-
-    for(;;){
-      int ac;
-      char buf[BUFLEN];
-      char *av[ARGNUM];
-      char filename[FILENUM][FILELEN];
-      int redir_in, redir_out, redir_append;
+    while(pipec < MAXPIPE + 1){
+      int ac, redir_in, redir_out, redir_append;
+      char buf[BUFLEN], *av[ARGNUM], filename[2][FILELEN];
       
-      ac = err = 0;
-      redir_in = redir_out = redir_append = 0;
-      count++;
+      ac = err = redir_in = redir_out = redir_append = 0;
+      memset(buf, 0, BUFLEN);
       for(int i = 0; i < ARGNUM; i++){
-        av[i] = &buf[32*i];
+        av[i] = &buf[ARGLEN * i];
       }
 
       while(ac < ARGNUM){
         ret = gettoken(av[ac], ARGLEN);
+
         if(ret == TKN_NORMAL){
           ac++;
-        }else if(ret == TKN_REDIR_IN){
-	  ret = gettoken(filename[0], FILELEN);
+        }
+
+	if(ret == TKN_REDIR_IN){
+	  memset(filename[0], 0, FILELEN);
+          ret = gettoken(filename[0], FILELEN);
 	  if(ret == TKN_NORMAL){
 	    redir_in = 1;
 	  }else{
-	    fprintf(stderr, "syntax error: no file name\n");
+	    redir_in = 0;
 	    err = 1;
+	    fprintf(stderr, "syntax error: unexpected token\n");
 	    break;
 	  }
-        }else if(ret == TKN_REDIR_OUT){
+        }
+
+	if(ret == TKN_REDIR_OUT){
+	  memset(filename[1], 0, FILELEN);
 	  ret = gettoken(filename[1], FILELEN);
 	  if(ret == TKN_NORMAL){
+	    if(redir_append){
+	      redir_append = 0;
+	    }
 	    redir_out = 1;
 	  }else{
-	    fprintf(stderr, "syntax error: no file name\n");
+	    redir_out = 0;
 	    err = 1;
+	    fprintf(stderr, "syntax error: unexpected token\n");
 	    break;
 	  }
-	}else if(ret == TKN_REDIR_APPEND){
+	}
+	
+	if(ret == TKN_REDIR_APPEND){
+	  memset(filename[1], 0, FILELEN);
 	  ret = gettoken(filename[1], FILELEN);
 	  if(ret == TKN_NORMAL){
+	    if(redir_out){
+	      redir_out = 0;
+	    }
 	    redir_append = 1;
 	  }else{
-	    fprintf(stderr, "syntax error: no file name\n");
+	    redir_append = 0;
 	    err = 1;
+	    fprintf(stderr, "syntax error: unexpected token\n");
 	    break;
 	  }
-	}else if(ret == TKN_PIPE || ret == TKN_EOL){
+	}
+	
+	if(ret == TKN_PIPE || ret == TKN_EOL){
+	  if(ret == TKN_PIPE && pipec == MAXPIPE){
+	    err = 1;
+	    fprintf(stderr, "error: too many pipes\n");
+	  }
 	  av[ac] = NULL;
           break;
         }
@@ -102,10 +126,11 @@ int main(){
       if(err){
         break;
       }
+
       if(ret == TKN_PIPE){
 	if(av[0] == NULL){
-	  fprintf(stderr, "syntax error: no command\n");
 	  err = 1;
+	  fprintf(stderr, "syntax error: no command\n");
 	  break;
 	}
 	pipe(pfd[pipec]);
@@ -124,17 +149,21 @@ int main(){
 	  if(redir_in){
 	    redir(filename[0], 0);
 	  }
+
 	  if(redir_out){
 	    redir(filename[1], 1);
-	  }else if(redir_append){
+	  }
+
+	  if(redir_append){
 	    redir(filename[1], 2);
 	  }
 
 	  int i;
 	  if((i = existfile(pc, pv, av[0])) < 0){
-	    fprintf(stderr, "no such command\n");
+	    fprintf(stderr, "%s: no such command\n", av[0]);
 	    exit(1);
 	  }
+
 	  char str[512];
 	  memset(str, 0, sizeof(str));
 	  strncpy(str, pv[i], sizeof(str) - 2);
@@ -148,15 +177,18 @@ int main(){
 	if(fd > 0){
 	  pipec++;
 	}
-      }else if(ret == TKN_EOL){
+      }
+      
+      if(ret == TKN_EOL){
 	if(av[0] == NULL && pipec){
 	  fprintf(stderr, "> ");
 	  continue;
 	}else if(av[0] == NULL){
-	  fprintf(stderr, "syntax error: no command\n");
 	  err = 1;
+	  fprintf(stderr, "syntax error: no command\n");
 	  break;
 	}
+
 	if(strcmp(av[0], "exit") == 0){
 	  exit(0);
 	}else if(strcmp(av[0], "cd") == 0){
@@ -171,22 +203,26 @@ int main(){
 	        close(pfd[i][0]);
 		close(pfd[i][1]);
 	      }
-	    }else{
-	      if(redir_in){
-	        redir(filename[0], 0);
-	      }
 	    }
+
+	    if(redir_in){
+	      redir(filename[0], 0);
+	    }
+
 	    if(redir_out){
 	      redir(filename[1], 1);
-	    }else if(redir_append){
+	    }
+	    
+	    if(redir_append){
 	      redir(filename[1], 2);
 	    }
 
 	    int i;
 	    if((i = existfile(pc, pv, av[0])) < 0){
-	      fprintf(stderr, "no such command\n");
+	      fprintf(stderr, "%s: no such command\n", av[0]);
 	      exit(1);
 	    }
+
 	    char str[512];
 	    memset(str, 0, sizeof(str));
 	    strncpy(str, pv[i], sizeof(str) - 2);
@@ -197,6 +233,7 @@ int main(){
 	      exit(1);
 	    }
 	  }
+
 	  if(fd > 0){
 	    break;
 	  }
@@ -210,21 +247,20 @@ int main(){
 	close(pfd[i][1]);
       }
     }
+
     if(err){
-      char c;
       if(ret != TKN_EOL){
         char tmp[BUFLEN];
         if(fgets(tmp, BUFLEN, stdin) < 0){
           fprintf(stderr, "failed to read remaining characters in stdin\n");
         }
       }
-      count -= 1;
     }
-    if(count){
-      int status[count];
-      for(int i = 0; i < count; i++){
-        wait(&status[i]);
-      }
+
+    int k = err ? pipec : pipec + 1;
+    int status[k];
+    for(int i = 0; i < k; i++){
+      wait(&status[i]);
     }
   }
 }

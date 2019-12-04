@@ -122,15 +122,10 @@ int existfile(int pc, char *pv[], char *filename){
   return -1;
 }
 
-void sigint_handler(int sig){
-  char cwd[256];
-  printf("\n");
-}
-
 void set_sigaction(){
   struct sigaction act;
   sigemptyset(&act.sa_mask);
-  act.sa_handler = sigint_handler;
+  act.sa_handler = SIG_IGN;
   act.sa_flags = 0;
   if(sigaction(SIGINT, &act, NULL) < 0){
     perror("sigaction");
