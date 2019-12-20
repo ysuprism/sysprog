@@ -4,7 +4,9 @@
 #include <ctype.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <sys/wait.h>
 #include <signal.h>
+#include <termios.h>
 #include "token.h"
 
 token gettoken(char *token, int len){
@@ -19,6 +21,8 @@ token gettoken(char *token, int len){
   }
 
   switch(c){
+    case EOF:
+	    return TKN_EOF;
     case '\n':
 	    return TKN_EOL;
     case '&':
@@ -41,8 +45,8 @@ token gettoken(char *token, int len){
 
   for(i = 0; i < len - 1; i++){
     c = getchar();
-    if(c != '\n' && c != '&' && c != '<' && 
-		    c != '>' && c != '|' && !isblank(c)){
+    if(c != EOF && c != '\n' && c != '&' && c != '<' && 
+       c != '>' && c != '|' && !isblank(c)){
       *p++ = c;
     }else{
       break;
@@ -122,22 +126,49 @@ int existfile(int pc, char *pv[], char *filename){
   return -1;
 }
 
+void sigchld_handler(){
+  pid_t child_pid = 0;
+
+  do{
+    int status;
+    child_pid = waitpid(-1, &status, WNOHANG);
+  }while(child_pid > 0);
+}
+
 void set_sigaction(){
-  struct sigaction act;
+  struct sigaction act, act2;
+
+  memset(&act, 0, sizeof(act));
   sigemptyset(&act.sa_mask);
   act.sa_handler = SIG_IGN;
   act.sa_flags = 0;
+  act.sa_flags |= SA_RESTART;
+
+  memset(&act2, 0, sizeof(act2));
+  sigemptyset(&act2.sa_mask);
+  act2.sa_handler = sigchld_handler;
+  act2.sa_flags = 0;
+  act2.sa_flags |= SA_RESTART;
+
   if(sigaction(SIGINT, &act, NULL) < 0){
     perror("sigaction");
     exit(1);
   }
-
-  struct sigaction act2;
-  sigemptyset(&act2.sa_mask);
-  act2.sa_handler = SIG_IGN;
-  act2.sa_flags = 0;
-  if(sigaction(SIGTTOU, &act2, NULL) < 0){
+  
+  if(sigaction(SIGTTOU, &act, NULL) < 0){
     perror("sigaction");
     exit(1);
   }
+
+  if(sigaction(SIGCHLD, &act2, NULL) < 0){
+    perror("sigaction");
+    exit(1);
+  }
+}
+
+void setup_term(){
+  struct termios t;
+  tcgetattr(0, &t);
+  t.c_lflag &= ~ECHOCTL;
+  tcsetattr(0, TCSANOW, &t);
 }

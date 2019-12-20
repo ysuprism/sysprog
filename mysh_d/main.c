@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/wait.h>
 #include <signal.h>
 #include "token.h"
@@ -25,9 +26,10 @@ void redir(char *filename, int mode);
 void getpaths(int *pc, char *pv[], int len, char *pbuf);
 int existfile(int pc, char *pv[], char *filename);
 void set_sigaction();
+void setup_term();
 
 int main(){
-  int pc, fd, pfd[MAXPIPE][2];
+  int pc, fd, fd2, pfd[MAXPIPE][2];
   char *path, *pv[PATHNUM], pbuf[PBUFLEN];
 
   path = getenv("PATH");
@@ -39,13 +41,20 @@ int main(){
   getpaths(&pc, pv, PATHNUM, pbuf);
   
   set_sigaction();
+  setup_term();
+
+  if((fd2 = open("/dev/tty", O_RDWR)) < 0){
+    perror("open");
+    exit(1);
+  }
 
   for(;;){
-    int pipec, err;
+    int pipec, err, bg;
     char cwd[CWDLEN];
+    pid_t pgid, fgid;
     token ret;
 
-    pipec = 0;
+    pipec = bg = pgid = 0;
     memset(cwd, 0, CWDLEN);
     
     getcwd(cwd, CWDLEN);
@@ -113,6 +122,17 @@ int main(){
 	  }
 	}
 	
+	if(ret == TKN_BG){
+	  ret = gettoken(av[ac], ARGLEN);
+	  if(ret == TKN_EOL){
+	    bg = 1;
+	  }else{
+	    err = 1;
+	    fprintf(stderr, "syntax error: unexpected token\n");
+	    break;
+	  }
+	}
+
 	if(ret == TKN_PIPE || ret == TKN_EOL){
 	  if(ret == TKN_PIPE && pipec == MAXPIPE){
 	    err = 1;
@@ -166,15 +186,27 @@ int main(){
 
 	  char str[512];
 	  memset(str, 0, sizeof(str));
+
 	  strncpy(str, pv[i], sizeof(str) - 2);
 	  str[strlen(str)] = '/';
 	  strncat(str, av[0], sizeof(str) - strlen(str) - 1);
+
+	  signal(SIGINT, SIG_DFL);
+
           if(execve(str, av, environ) < 0){
 	    perror("execve");
 	    exit(1);
 	  }
 	}
 	if(fd > 0){
+	  if(!pipec){
+	    pgid = fd;
+	  }
+
+	  if(setpgid(fd, pgid) < 0){
+	    perror("setpgid");
+	  }
+
 	  pipec++;
 	}
       }
@@ -190,6 +222,7 @@ int main(){
 	}
 
 	if(strcmp(av[0], "exit") == 0){
+	  close(fd2);
 	  exit(0);
 	}else if(strcmp(av[0], "cd") == 0){
 	  chdir(av[1]);
@@ -225,9 +258,13 @@ int main(){
 
 	    char str[512];
 	    memset(str, 0, sizeof(str));
+
 	    strncpy(str, pv[i], sizeof(str) - 2);
 	    str[strlen(str)] = '/';
 	    strncat(str, av[0], sizeof(str) - strlen(str) - 1);
+            
+	    signal(SIGINT, SIG_DFL);
+
 	    if(execve(str, av, environ) < 0){
 	      perror("execve");
 	      exit(1);
@@ -235,6 +272,18 @@ int main(){
 	  }
 
 	  if(fd > 0){
+	    if(pgid == 0){
+	      pgid = fd;
+	    }
+	    if(setpgid(fd, pgid) < 0){
+	      perror("setpgid");
+	    }
+
+            fgid = bg ? getpgrp() : pgid;
+	    if(tcsetpgrp(fd2, fgid) < 0){
+	      perror("tcsetpgrp");
+	    }
+
 	    break;
 	  }
 	}
@@ -248,19 +297,25 @@ int main(){
       }
     }
 
-    if(err){
-      if(ret != TKN_EOL){
-        char tmp[BUFLEN];
-        if(fgets(tmp, BUFLEN, stdin) < 0){
-          fprintf(stderr, "failed to read remaining characters in stdin\n");
-        }
+    if(ret != TKN_EOL){
+      char tmp[BUFLEN];
+      if(fgets(tmp, BUFLEN, stdin) < 0){
+        fprintf(stderr, "failed to read remaining characters in stdin\n");
       }
     }
 
-    int k = err ? pipec : pipec + 1;
-    int status[k];
-    for(int i = 0; i < k; i++){
-      wait(&status[i]);
+    if(!bg){
+      int j = err ? pipec : pipec + 1;
+      int status[j];
+
+      for(int i = 0; i < j; i++){
+        wait(&status[i]);
+      }
+
+      fgid = getpgrp();
+      if(tcsetpgrp(fd2, fgid) < 0){
+        perror("tcsetpgrp");
+      }
     }
   }
 }
