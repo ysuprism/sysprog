@@ -1,14 +1,15 @@
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/time.h>
+#include <arpa/inet.h>
 #include "mydhcp.h"
 #include "mydhcpd.h"
 
-void init_client(struct client *t){
-  memset(t, 0, sizeof(struct client));
-  t->fp = t->bp = t;
-}
+extern struct client *resend;
 
 void insert_client(struct client *head, struct client *t){
   t->fp = head;
@@ -18,37 +19,68 @@ void insert_client(struct client *head, struct client *t){
 }
 
 void remove_client(struct client *t){
-  t->fp->bp = t->bp;
-  t->bp->fp = t->fp;
-  t->fp = t->bp = NULL;
-  free(t);
+  if(t->fp != t){
+    t->fp->bp = t->bp;
+    t->bp->fp = t->fp;
+    t->fp = t->bp = NULL;
+  }
 }
 
-struct client *search_client(struct client *head, struct sockaddr_in *from){
+struct client *pop_client(struct client *cfhead){
   struct client *p;
-  if(head->fp != NULL){
-    for(p = head->fp; p != head; p = p->fp){
+
+  if(cfhead->fp != cfhead){
+    p = cfhead->fp;
+    p->fp->bp = cfhead;
+    cfhead->fp = p->fp;
+    p->fp = p->bp = NULL;
+    return p;
+  }
+
+  return NULL;
+}
+
+struct client *search_client(struct client *chead, struct sockaddr_in *from){
+  struct client *p;
+
+  if(chead->fp != NULL){
+    for(p = chead->fp; p != chead; p = p->fp){
       if(p->ip == from->sin_addr.s_addr && p->port == from->sin_port){
         return p;
       }
     }
   }
+
   return NULL;
 }
 
-struct client *create_client(struct client *head, struct sockaddr_in *from){
-  struct client *new = (struct client *)malloc(sizeof(struct client));
-  memset(new, 0, sizeof(struct client));
+struct client *create_client(struct client *chead, struct client *cfhead, 
+		struct sockaddr_in *from){
+  struct client *new;
+
+  new = pop_client(cfhead);
   new->ip = from->sin_addr.s_addr;
   new->port = from->sin_port;
-  new->status = INIT;
-  insert_client(head, new);
+  insert_client(chead, new);
+
   return new;
 }
 
-void init_alloc(struct alloc *t){
-  memset(t, 0, sizeof(struct alloc));
-  t->fp = t->bp = t;
+void delete_client(struct client *cfhead, struct client *t){
+  remove_client(t);
+  memset(t, 0, sizeof(struct client));
+  insert_client(cfhead, t);
+}
+
+void init_clientlist(struct client *chead, struct client *cfhead, 
+		struct client list[], int len){
+  chead->fp = chead->bp = chead;
+  cfhead->fp = cfhead->bp = cfhead;
+
+  for(int i = 0; i < len; i++){
+    memset(&list[i], 0, sizeof(struct client));
+    insert_client(cfhead, &list[i]);
+  }
 }
 
 void insert_alloc(struct alloc *head, struct alloc *t){
@@ -58,49 +90,50 @@ void insert_alloc(struct alloc *head, struct alloc *t){
   head->bp = t;
 }
 
-struct alloc *remove_alloc(struct alloc *head){
-  struct alloc *p = head->fp;
-  if(head->fp != head){
-    head->fp = p->fp;
-    p->fp->bp = head;
+void remove_alloc(struct alloc *t){
+  if(t->fp != t){
+     t->fp->bp = t->bp;
+     t->bp->fp = t->fp;
+     t->fp = t->bp = NULL;
+  }
+}
+
+struct alloc *pop_alloc(struct alloc *afhead){
+  struct alloc *p;
+
+  if(afhead->fp != afhead){
+    p = afhead->fp;
+    p->fp->bp = afhead;
+    afhead->fp = p->fp;
     p->fp = p->bp = NULL;
     return p;
   }
+
   return NULL;
 }
 
-int get_rownum(char *filename){
+void init_alloclist(struct alloc *ahead, struct alloc *afhead, 
+		struct alloc list[], int len, int *ttl, char *filename){
   FILE *fp;
-  char buf[256];
-  int count = 0;
-  if((fp = fopen(filename, "r")) == NULL){
-    perror("fopen");
-    exit(1);
-  }
-  while(fgets(buf, sizeof(buf), fp) != NULL){
-    count++;
-  }
-  fclose(fp);
-  return count;
-}
-
-void init_alloclist(struct alloc *head, struct alloc list[], 
-		int len, char *filename){
-  FILE *fp;
-  int ttl;
   char addr[128], netmask[128];
+
   if((fp = fopen(filename, "r")) == NULL){
     perror("fopen");
     exit(1);
   }
-  fscanf(fp, "%d", &ttl);
-  init_alloc(head);
+
+  fscanf(fp, "%d", ttl);
+
+  ahead->fp = ahead->bp = ahead;
+  afhead->fp = afhead->bp = afhead;
+
   for(int i = 0; i < len; i++){
     fscanf(fp, "%s%s", addr, netmask);
     inet_aton(addr, &list[i].addr);
     inet_aton(netmask, &list[i].netmask);
-    insert_alloc(head, &list[i]);
+    insert_alloc(afhead, &list[i]);
   }
+
   fclose(fp);
 }
 
@@ -118,23 +151,51 @@ dhcph_t get_dhcph_type(struct dhcph *recv){
   }
 }
 
+struct client *check_resend(struct client *chead, long current){
+  struct client *p;
+  long delay, last;
+  
+  if(chead->fp == chead){
+    return NULL;
+  }
+
+  for(p = chead->fp; p != chead; p = p->fp){
+    last = p->last.tv_sec;
+    delay = current - last;
+    if(delay >= 10){
+      return p;
+    } 
+  }
+
+  return NULL;
+} 
+
 event_t wait_event(int s, state_t *state, fd_set *rdfds, 
 		struct timeval *timeout, struct dhcph *recv, 
-		struct sockaddr_in *from, struct client *head){
+		struct client *chead, struct sockaddr_in *from){
   int ret, fromlen;
   dhcph_t type;
   struct client *cp;
+  struct timeval current;
 
-  fromlen = sizeof(struct sockaddr_in);
   FD_ZERO(rdfds);
   FD_SET(s, rdfds);
 
-  if((ret = select(s+1, rdfds, NULL, NULL, timeout)) < 0){
-    perror("select");
-    exit(1);
-  }else if(ret == 0 && *state == WAIT_REQ){
-    return RECV_TIMEOUT;
+  while((ret = select(s+1, rdfds, NULL, NULL, timeout)) < 1){
+    if(ret == 0){
+      gettimeofday(&current, NULL);
+      if((resend = check_resend(chead, current.tv_sec)) != NULL){
+        return RECV_TIMEOUT;
+      }
+    }
+
+    if(ret < 0){
+      perror("select");
+      exit(1);
+    }
   }
+  
+  fromlen = sizeof(struct sockaddr_in);
 
   if(recvfrom(s, recv, sizeof(struct dhcph), 0, 
 	(struct sockaddr *)from, &fromlen) < 0){
@@ -142,17 +203,17 @@ event_t wait_event(int s, state_t *state, fd_set *rdfds,
     exit(1);
   }
 
-  cp = search_client(head, recv);
+  cp = search_client(chead, from);
   *state = cp != NULL ? cp->state : INIT;
-
   type = get_dhcph_type(recv);
+
   switch(type){
     case DISCOVER:
 	    return RECV_DISCOVER;
     case REQ_ALLOC:
 	    if(cp != NULL && 
 	       recv->ttl <= cp->ttl && 
-	       recv->ip == cp->ap->addr.s_addr && 
+	       recv->addr == cp->ap->addr.s_addr && 
 	       recv->netmask == cp->ap->netmask.s_addr){
 	      return RECV_REQ_ALLOC_OK;
 	    }else{
@@ -161,109 +222,165 @@ event_t wait_event(int s, state_t *state, fd_set *rdfds,
     case REQ_EXT_ALLOC:
 	    if(cp != NULL && 
 	       recv->ttl <= cp->ttl &&
-	       recv->ip == cp->ap->addr.s_addr &&
+	       recv->addr == cp->ap->addr.s_addr &&
 	       recv->netmask == cp->ap->netmask.s_addr){
 	      return RECV_REQ_EXT_ALLOC_OK;
 	    }else{
 	      return RECV_REQ_EXT_ALLOC_NG;
 	    }
     case RELEASE:
-	    return RECV_RELEASE;
-    case default:
+	    if(cp != NULL){
+	      return RECV_RELEASE;
+	    }
+    default:
 	    return RECV_UNKNOWN;
   }
 }
 
-void alloc_ip(struct client *cp, struct alloc *head){
-  struct alloc *ap = remove_alloc(head);
+void alloc_ip(struct client *cp, struct alloc *afhead){
+  struct alloc *ap;
+  
+  ap = pop_alloc(afhead);
   cp->ap = ap;
 }
 
-void recall_ip(struct client *cp, struct alloc *head){
-  insert_alloc(head, cp->ap);
+void recall_ip(struct client *cp, struct alloc *afhead){
+  struct alloc *ap;
+  
+  ap = cp->ap;
+  remove_alloc(ap);
+  insert_alloc(afhead, ap);
 }
 
-void f_act1(int s, uint16_t ttl, struct client *ch, 
-		struct alloc *ah, struct sockaddr_in *from){
+void print_state_change(struct client *cp, state_t old, state_t new){
+  char *id;
+  char *states[6] = {"DUMMY", "INIT", "WAIT_REQ", 
+	  "RESEND", "IN_USE", "TERMINATE"};
+  struct in_addr in;
+
+  in.s_addr = cp->ip;
+  id = inet_ntoa(in);
+
+  printf("## state changed (ID %s): %s -> %s ##\n", id, states[old], states[new]);
+}
+
+void f_act1(int s, int *state, uint16_t ttl, struct client *chead, 
+		struct client *cfhead, struct alloc *ahead, 
+		struct alloc *afhead, struct sockaddr_in *from){
   struct client *cp;
-  struct dhcph reply = {0};
+  struct dhcph reply;
 
-  cp = create_client(ch, from);
-  alloc_ip(cp, ah);
+  cp = create_client(chead, cfhead, from);
+  alloc_ip(cp, afhead);
 
-  reply.type = OFFER;
+  memset(&reply, 0, sizeof(reply));
+  reply.type = OFFER_OK;
   if(cp->ap != NULL){
     reply.code = 0;
     reply.ttl = ttl;
-    reply.ip = cp->ap.addr.s_addr;
-    reply.netmask = cp->ap.netmask.s_addr; 
+    reply.addr = cp->ap->addr.s_addr;
+    reply.netmask = cp->ap->netmask.s_addr; 
   }else{
     reply.code = 1;
   }
   
-  if(sendto(s, &reply, sizeof(struct dhcph), 0, 
-	(struct sockaddr *)from, sizeof(struct sockaddr_in)) < 0){
+  if(sendto(s, &reply, sizeof(reply), 0, 
+		(struct sockaddr *)from, sizeof(struct sockaddr_in)) < 0){
     perror("sendto");
     exit(1);
   }
-  cp->state = WAIT_REQ;
+
+  print_state_change(cp, INIT, WAIT_REQ);
+  *state = cp->state = WAIT_REQ;
 }
 
-void f_act2(int s, uint16_t ttl, struct client *ch,
-		struct alloc *ah, struct sockaddr_in *from){
-  struct dhcph reply = {0};
+void f_act2(int s, int *state,uint16_t ttl, struct client *chead, 
+	        struct client *cfhead, struct alloc *ahead, 
+		struct alloc *afhead, struct sockaddr_in *from){
+  struct client *cp;
+  struct dhcph reply;
+  
+  cp = search_client(chead, from);
 
-  reply.type = ACK;
+  memset(&reply, 0, sizeof(reply));
+  reply.type = ACK_OK;
   reply.code = 0;
 
-  if(sendto(s, &reply, sizeof(struct dhcph), 0, 
+  if(sendto(s, &reply, sizeof(reply), 0, 
 	(struct sockaddr *)from, sizeof(struct sockaddr_in)) < 0){
     perror("sendto");
     exit(1);
   }
-  cp->state = IN_USE;
+
+  print_state_change(cp, cp->state, IN_USE);
+  *state = cp->state = IN_USE;
 }
 
-void f_act3(int s, uint16_t ttl, struct client *ch,
-		struct alloc *ah, struct sockaddr_in *from){
+void f_act3(int s, int *state, uint16_t ttl, struct client *chead, 
+		struct client *cfhead, struct alloc *ahead, 
+		struct alloc *afhead, struct sockaddr_in *from){
   struct client *cp;  
-  struct dhcph reply = {0};
+  struct dhcph reply;
 
-  cp = search_client(ch, from);
+  cp = search_client(chead, from);
   cp->ttlcounter = ttl;
-
-  reply.type = ACK;
+  
+  memset(&reply, 0, sizeof(reply));
+  reply.type = ACK_OK;
   reply.code = 0;
 
-  if(sendto(s, &reply, sizeof(struct dhcph), 0, 
-	(struct sockaddr *)from, sizeof(struct sockaddr_in)) < 0){
+  if(sendto(s, &reply, sizeof(reply), 0, 
+		(struct sockaddr *)from, sizeof(struct sockaddr_in)) < 0){
     perror("sendto");
     exit(1);
   }
+
+  print_state_change(cp, cp->state, IN_USE);
+  *state = cp->state = IN_USE;
 }
 
-void f_act4(int s, uint16_t ttl, struct client *ch,
-		struct alloc *ah, struct sockaddr_in *from){
+void f_act4(int s, int *state, uint16_t ttl, struct client *chead, 
+		struct client *cfhead, struct alloc *ahead, 
+		struct alloc *afhead, struct sockaddr_in *from){
   struct client *cp;
 
-  cp = search_client(ch, from);
-  recall_ip(cp, ah);
-  remove_client(cp);
+  cp = search_client(chead, from);
+  print_state_change(cp, cp->state, TERMINATE);
+  *state = TERMINATE;
+  recall_ip(cp, afhead);
+  delete_client(cfhead, cp);
 }
 
-void f_act5(int s, uint16_t ttl, struct client *ch,
-		struct alloc *ah, struct sockaddr_in *from){
+void f_act5(int s, int *state, uint16_t ttl, struct client *chead, 
+		struct client *cfhead, struct alloc *ahead, 
+		struct alloc *afhead, struct sockaddr_in *from){
   struct client *cp;
-  struct dhcph reply = {0};
+  struct dhcph reply;
 
-  reply.type = OFFER;
-  reply.code = 
+  memset(&reply, 0, sizeof(reply));
+  reply.type = OFFER_OK;
+  reply.code = 0;
+  reply.ttl = ttl;
+  reply.addr = resend->ap->addr.s_addr;
+  reply.netmask = resend->ap->netmask.s_addr;
+
+  if(sendto(s, &reply, sizeof(reply), 0, 
+		(struct sockaddr *)from, sizeof(struct sockaddr_in)) < 0){
+    perror("sendto");
+    exit(1);
+  }
+
+  print_state_change(cp, cp->state, RESEND);
+  *state = cp->state = RESEND;
 }
 
-void f_act6(int s, uint16_t ttl, struct client *ch, 
-		struct alloc *ah, struct sockaddr_in *from){
+void f_act6(int s, int *state, uint16_t ttl, struct client *chead, 
+		struct client *cfhead, struct alloc *ahead, 
+		struct alloc *afhead, struct sockaddr_in *from){
   struct client *cp;
 
-  cp = search_client(ch, from);
-  remove_client(cp);
+  cp = search_client(chead, from);
+  print_state_change(cp, cp->state, TERMINATE);
+  *state = TERMINATE;
+  delete_client(cfhead, cp);
 }

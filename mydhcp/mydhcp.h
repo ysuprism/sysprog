@@ -1,3 +1,6 @@
+#include <stdint.h>
+#include <arpa/inet.h>
+
 typedef enum{
   DISCOVER,
   OFFER_OK,
