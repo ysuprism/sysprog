@@ -23,8 +23,8 @@ struct alloc *pop_alloc(struct alloc *);
 void init_alloclist(struct alloc *, struct alloc *, struct alloc [],
 	       	int, int *, char *);
 dhcph_t get_dhcph_type(struct dhcph *);
-event_t wait_event(int, state_t *, fd_set *, struct timeval *, 
-		struct dhcph *, struct client *, struct sockaddr_in *);
+event_t wait_event(int, state_t *, fd_set *, struct dhcph *, 
+		struct client *, struct sockaddr_in *);
 void alloc_ip(struct client *, struct alloc *);
 void recall_ip(struct client *, struct alloc *);
 void f_act1(int, state_t *, uint16_t, struct client *, struct client *, 
@@ -81,7 +81,6 @@ int main(int ac, char *av[]){
   int ttl;
   struct sockaddr_in myskt, from;
   struct dhcph recv;
-  struct timeval timeout;
   struct sigaction act;
   fd_set rdfds;
   
@@ -99,9 +98,6 @@ int main(int ac, char *av[]){
   myport = 51230;
   ttl = 20;
   resend = NULL;
-
-  timeout.tv_sec = 10;
-  timeout.tv_usec = 0;
 
   memset(&myskt, 0, sizeof(myskt));
   myskt.sin_family = AF_INET;
@@ -129,7 +125,7 @@ int main(int ac, char *av[]){
 
   for(;;){
     printf("-- wait for event --\n");
-    event = wait_event(s, &state, &rdfds, &timeout, &recv, &chead, &from);
+    event = wait_event(s, &state, &rdfds, &recv, &chead, &from);
     for(pt = ptab; pt->state; pt++){
       if(pt->state == state && pt->event == event){
         (*pt->func)(s, &state, ttl, &chead, 

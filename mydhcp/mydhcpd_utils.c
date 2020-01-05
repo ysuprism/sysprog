@@ -171,17 +171,19 @@ struct client *check_resend(struct client *chead, long current){
 } 
 
 event_t wait_event(int s, state_t *state, fd_set *rdfds, 
-		struct timeval *timeout, struct dhcph *recv, 
-		struct client *chead, struct sockaddr_in *from){
+		struct dhcph *recv, struct client *chead, 
+		struct sockaddr_in *from){
   int ret, fromlen;
   dhcph_t type;
   struct client *cp;
-  struct timeval current;
-
+  struct timeval current, timeout;
+  
   FD_ZERO(rdfds);
   FD_SET(s, rdfds);
+  timeout.tv_sec = 10;
+  timeout.tv_usec = 0;
 
-  while((ret = select(s+1, rdfds, NULL, NULL, timeout)) < 1){
+  while((ret = select(s+1, rdfds, NULL, NULL, &timeout)) < 1){
     if(ret == 0){
       gettimeofday(&current, NULL);
       if((resend = check_resend(chead, current.tv_sec)) != NULL){
@@ -354,7 +356,6 @@ void f_act4(int s, int *state, uint16_t ttl, struct client *chead,
 void f_act5(int s, int *state, uint16_t ttl, struct client *chead, 
 		struct client *cfhead, struct alloc *ahead, 
 		struct alloc *afhead, struct sockaddr_in *from){
-  struct client *cp;
   struct dhcph reply;
 
   memset(&reply, 0, sizeof(reply));
@@ -370,8 +371,9 @@ void f_act5(int s, int *state, uint16_t ttl, struct client *chead,
     exit(1);
   }
 
-  print_state_change(cp, cp->state, RESEND);
-  *state = cp->state = RESEND;
+  print_state_change(resend, resend->state, RESEND);
+  *state = resend->state = RESEND;
+  resend = NULL;
 }
 
 void f_act6(int s, int *state, uint16_t ttl, struct client *chead, 
