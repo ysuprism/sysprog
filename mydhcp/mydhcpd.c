@@ -39,6 +39,8 @@ void f_act5(int, state_t *, uint16_t, struct client *, struct client *,
 		struct alloc *, struct alloc *, struct sockaddr_in *);
 void f_act6(int, state_t *, uint16_t, struct client *, struct client *, 
 		struct alloc *, struct alloc *, struct sockaddr_in *);
+void f_act7(int, state_t *, uint16_t, struct client *, struct client *, 
+		struct alloc *, struct alloc *, struct sockaddr_in *);
 
 struct client chead, *resend;
 
@@ -47,9 +49,9 @@ struct proctable ptab[] = {
         {WAIT_REQ, RECV_REQ_ALLOC_OK, f_act2},
         {WAIT_REQ, RECV_REQ_ALLOC_NG, f_act6},
         {WAIT_REQ, RECV_TIMEOUT, f_act5},
-        {RESEND, RECV_REQ_ALLOC_OK, f_act2},
-        {RESEND, RECV_REQ_ALLOC_NG, f_act6},
-        {RESEND, RECV_TIMEOUT, f_act6},
+        {WAIT_RESEND, RECV_REQ_ALLOC_OK, f_act2},
+        {WAIT_RESEND, RECV_REQ_ALLOC_NG, f_act7},
+        {WAIT_RESEND, RECV_TIMEOUT, f_act7},
         {IN_USE, RECV_REQ_EXT_ALLOC_OK, f_act3},
         {IN_USE, RECV_REQ_EXT_ALLOC_NG, f_act6},
         {IN_USE, RECV_RELEASE, f_act4},

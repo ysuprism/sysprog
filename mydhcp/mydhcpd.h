@@ -4,7 +4,7 @@
 typedef enum{
   INIT = 1,
   WAIT_REQ,
-  RESEND,
+  WAIT_RESEND,
   IN_USE,
   TERMINATE
 }state_t;

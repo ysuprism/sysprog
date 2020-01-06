@@ -2,7 +2,7 @@
 #include <arpa/inet.h>
 
 typedef enum{
-  DISCOVER = 1,
+  DISCOVER,
   OFFER_OK,
   OFFER_NG,
   REQ_ALLOC,

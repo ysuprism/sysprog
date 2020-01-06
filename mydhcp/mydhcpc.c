@@ -26,7 +26,7 @@ int main(int ac, char *av[]){
   port = 51230;
   
   memset(&send, 0, sizeof(send));
-  send.type = DISCOVER;
+  send.type = 1;
 
   if((s = socket(AF_INET, SOCK_DGRAM, 0)) < 0){
     perror("socket");
